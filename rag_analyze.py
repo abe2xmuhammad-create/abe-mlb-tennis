@@ -25,13 +25,24 @@ from typing import Any
 from llm_provider import get_llm
 from rag_context import SYSTEM_PROMPT, build_prompt
 
+CONTAINER_KEYS = ("games", "slate", "board", "cards", "plays")
+
 FIELD_ALIASES = {
     "home": ["home_team", "home", "homeTeam", "home_name"],
     "away": ["away_team", "away", "awayTeam", "away_name"],
-    "commence": ["commence_time", "start_time", "game_time", "date", "commence"],
-    "odds": ["odds", "price_line", "ml", "moneyline", "line"],
+    "matchup": ["matchup", "game", "teams"],
+    "commence": ["commence_time", "start_time", "game_time", "time_et", "date", "commence"],
+    "odds": ["odds", "price_line", "line", "ml", "moneyline"],
+    "total": ["total", "ou", "over_under"],
     "sport": ["sport", "league"],
 }
+
+# Engine-produced fields passed through verbatim so the LLM grounds on the
+# actual board output instead of only the raw market line.
+PASSTHROUGH_FIELDS = (
+    "f5_play", "f5_tier", "ml_play", "ml_tier",
+    "pen_edge", "pen_mismatch", "pen_tag", "notes",
+)
 
 
 def _first(d: dict[str, Any], keys: list[str]) -> Any:
@@ -45,25 +56,39 @@ def _extract_games(data: Any) -> list[dict[str, Any]]:
     if isinstance(data, list):
         return [g for g in data if isinstance(g, dict)]
     if isinstance(data, dict):
-        for key in ("games", "slate", "board", "cards"):
+        for key in CONTAINER_KEYS:
             if isinstance(data.get(key), list):
                 return [g for g in data[key] if isinstance(g, dict)]
     return []
 
 
 def build_context_line(game: dict[str, Any]) -> str:
-    home = _first(game, FIELD_ALIASES["home"]) or "not in provided data"
-    away = _first(game, FIELD_ALIASES["away"]) or "not in provided data"
-    commence = _first(game, FIELD_ALIASES["commence"]) or "not in provided data"
-    odds = _first(game, FIELD_ALIASES["odds"]) or "not in provided data"
-    sport = _first(game, FIELD_ALIASES["sport"]) or "not in provided data"
-    return (
-        "CONTEXT:\n"
-        f"- sport: {sport}\n"
-        f"- matchup: {away} @ {home}\n"
-        f"- commence_time: {commence}\n"
-        f"- odds: {odds}"
-    )
+    """Build a strict CONTEXT block from whatever real fields the entry has.
+
+    Handles both split home/away schemas (Odds-API style) and a single
+    combined "matchup" string (slate-tracker board style).
+    """
+    matchup = _first(game, FIELD_ALIASES["matchup"])
+    if not matchup:
+        home = _first(game, FIELD_ALIASES["home"])
+        away = _first(game, FIELD_ALIASES["away"])
+        matchup = f"{away} @ {home}" if home and away else "not in provided data"
+
+    lines = [
+        "CONTEXT:",
+        f"- sport: {_first(game, FIELD_ALIASES['sport']) or 'not in provided data'}",
+        f"- matchup: {matchup}",
+        f"- start_time: {_first(game, FIELD_ALIASES['commence']) or 'not in provided data'}",
+        f"- line: {_first(game, FIELD_ALIASES['odds']) or 'not in provided data'}",
+    ]
+    total = _first(game, FIELD_ALIASES["total"])
+    if total:
+        lines.append(f"- total: {total}")
+    for field in PASSTHROUGH_FIELDS:
+        value = game.get(field)
+        if value not in (None, "", [], {}):
+            lines.append(f"- {field}: {value}")
+    return "\n".join(lines)
 
 
 def main() -> None:
