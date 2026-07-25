@@ -43,7 +43,8 @@ class OllamaProvider(LLMProvider):
             "system": system or "",
             "stream": False,
         }
-        resp = requests.post(f"{self.base_url}/api/generate", json=payload, timeout=60)
+        timeout = float(os.getenv("OLLAMA_TIMEOUT", "180"))
+        resp = requests.post(f"{self.base_url}/api/generate", json=payload, timeout=timeout)
         resp.raise_for_status()
         return resp.json().get("response", "")
 
