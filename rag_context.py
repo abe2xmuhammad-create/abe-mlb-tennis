@@ -23,29 +23,92 @@ RULES (strict, no exceptions):
 """
 
 
-def build_game_context(
-    sport: str,
-    home: str,
-    away: str,
-    commence: str,
-    price_line: str,
-    home_pitcher: dict[str, Any] | None = None,
-    away_pitcher: dict[str, Any] | None = None,
-) -> str:
-    """Assemble a strict CONTEXT block from already-fetched real fields only."""
+UNKNOWN = "not in provided data"
+
+CONTAINER_KEYS = ("games", "slate", "board", "cards", "plays")
+
+FIELD_ALIASES = {
+    "home": ["home_team", "home", "homeTeam", "home_name"],
+    "away": ["away_team", "away", "awayTeam", "away_name"],
+    "matchup": ["matchup", "game", "teams"],
+    "commence": ["commence_time", "start_time", "game_time", "time_et", "date", "commence"],
+    "odds": ["odds", "price_line", "line", "ml", "moneyline"],
+    "total": ["total", "ou", "over_under"],
+    "sport": ["sport", "league"],
+    "home_pitcher": ["home_pitcher", "home_sp", "home_starter", "homeProbablePitcher"],
+    "away_pitcher": ["away_pitcher", "away_sp", "away_starter", "awayProbablePitcher"],
+}
+
+# Engine-produced fields passed through verbatim so the LLM grounds on the
+# actual board output instead of only the raw market line.
+PASSTHROUGH_FIELDS = (
+    "f5_play", "f5_tier", "ml_play", "ml_tier",
+    "pen_edge", "pen_mismatch", "pen_tag", "notes",
+)
+
+
+def _first(entry: dict[str, Any], keys: list[str]) -> Any:
+    for key in keys:
+        if entry.get(key) not in (None, "", [], {}):
+            return entry[key]
+    return None
+
+
+def _pitcher_name(value: Any) -> str:
+    """Pitcher may be a plain name string or a MLB Stats API person dict."""
+    if isinstance(value, dict):
+        return value.get("fullName") or value.get("name") or UNKNOWN
+    return str(value)
+
+
+def extract_games(data: Any) -> list[dict[str, Any]]:
+    """Pull the list of game/play entries out of a board or report JSON payload."""
+    if isinstance(data, list):
+        return [g for g in data if isinstance(g, dict)]
+    if isinstance(data, dict):
+        for key in CONTAINER_KEYS:
+            if isinstance(data.get(key), list):
+                return [g for g in data[key] if isinstance(g, dict)]
+    return []
+
+
+def build_game_context(entry: dict[str, Any]) -> str:
+    """Assemble a strict CONTEXT block from whatever real fields an entry has.
+
+    Handles split home/away schemas (Odds-API style) and a single combined
+    "matchup" string (slate-tracker board style). Only fields actually present
+    are emitted — nothing is inferred or filled in.
+    """
+    matchup = _first(entry, FIELD_ALIASES["matchup"])
+    if not matchup:
+        home = _first(entry, FIELD_ALIASES["home"])
+        away = _first(entry, FIELD_ALIASES["away"])
+        matchup = f"{away} @ {home}" if home and away else UNKNOWN
+
     lines = [
         "CONTEXT:",
-        f"- sport: {sport}",
-        f"- matchup: {away} @ {home}",
-        f"- commence_time: {commence}",
-        f"- odds: {price_line if price_line else 'not in provided data'}",
+        f"- sport: {_first(entry, FIELD_ALIASES['sport']) or UNKNOWN}",
+        f"- matchup: {matchup}",
+        f"- start_time: {_first(entry, FIELD_ALIASES['commence']) or UNKNOWN}",
+        f"- line: {_first(entry, FIELD_ALIASES['odds']) or UNKNOWN}",
     ]
-    if home_pitcher:
-        name = home_pitcher.get("fullName", "not in provided data")
-        lines.append(f"- home probable pitcher: {name}")
-    if away_pitcher:
-        name = away_pitcher.get("fullName", "not in provided data")
-        lines.append(f"- away probable pitcher: {name}")
+
+    total = _first(entry, FIELD_ALIASES["total"])
+    if total:
+        lines.append(f"- total: {total}")
+
+    away_p = _first(entry, FIELD_ALIASES["away_pitcher"])
+    if away_p:
+        lines.append(f"- away probable pitcher: {_pitcher_name(away_p)}")
+    home_p = _first(entry, FIELD_ALIASES["home_pitcher"])
+    if home_p:
+        lines.append(f"- home probable pitcher: {_pitcher_name(home_p)}")
+
+    for field in PASSTHROUGH_FIELDS:
+        value = entry.get(field)
+        if value not in (None, "", [], {}):
+            lines.append(f"- {field}: {value}")
+
     return "\n".join(lines)
 
 

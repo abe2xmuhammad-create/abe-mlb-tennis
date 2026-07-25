@@ -42,11 +42,17 @@ class OllamaProvider(LLMProvider):
             "prompt": prompt,
             "system": system or "",
             "stream": False,
+            # Reasoning models (qwen3.5 etc) emit into a separate "thinking"
+            # field and leave "response" empty, generating unbounded reasoning
+            # until the request times out. Disable it for short factual output.
+            "think": os.getenv("OLLAMA_THINK", "").lower() in ("1", "true", "yes"),
         }
-        timeout = float(os.getenv("OLLAMA_TIMEOUT", "180"))
+        timeout = float(os.getenv("OLLAMA_TIMEOUT", "300"))
         resp = requests.post(f"{self.base_url}/api/generate", json=payload, timeout=timeout)
         resp.raise_for_status()
-        return resp.json().get("response", "")
+        data = resp.json()
+        # Fall back to "thinking" if a model ignores think=False.
+        return data.get("response") or data.get("thinking", "")
 
 
 class GeminiProvider(LLMProvider):
@@ -63,8 +69,11 @@ class GeminiProvider(LLMProvider):
             f"https://generativelanguage.googleapis.com/v1beta/models/"
             f"{self.model}:generateContent?key={self.api_key}"
         )
-        full_prompt = f"{system}\n\n{prompt}" if system else prompt
-        payload = {"contents": [{"parts": [{"text": full_prompt}]}]}
+        payload: dict = {"contents": [{"parts": [{"text": prompt}]}]}
+        if system:
+            # Dedicated field — stronger instruction adherence than prepending
+            # the system text to the user turn.
+            payload["systemInstruction"] = {"parts": [{"text": system}]}
         resp = requests.post(url, json=payload, timeout=60)
         resp.raise_for_status()
         data = resp.json()

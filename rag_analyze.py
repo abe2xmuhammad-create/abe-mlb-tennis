@@ -20,75 +20,9 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any
 
 from llm_provider import get_llm
-from rag_context import SYSTEM_PROMPT, build_prompt
-
-CONTAINER_KEYS = ("games", "slate", "board", "cards", "plays")
-
-FIELD_ALIASES = {
-    "home": ["home_team", "home", "homeTeam", "home_name"],
-    "away": ["away_team", "away", "awayTeam", "away_name"],
-    "matchup": ["matchup", "game", "teams"],
-    "commence": ["commence_time", "start_time", "game_time", "time_et", "date", "commence"],
-    "odds": ["odds", "price_line", "line", "ml", "moneyline"],
-    "total": ["total", "ou", "over_under"],
-    "sport": ["sport", "league"],
-}
-
-# Engine-produced fields passed through verbatim so the LLM grounds on the
-# actual board output instead of only the raw market line.
-PASSTHROUGH_FIELDS = (
-    "f5_play", "f5_tier", "ml_play", "ml_tier",
-    "pen_edge", "pen_mismatch", "pen_tag", "notes",
-)
-
-
-def _first(d: dict[str, Any], keys: list[str]) -> Any:
-    for k in keys:
-        if k in d and d[k] not in (None, ""):
-            return d[k]
-    return None
-
-
-def _extract_games(data: Any) -> list[dict[str, Any]]:
-    if isinstance(data, list):
-        return [g for g in data if isinstance(g, dict)]
-    if isinstance(data, dict):
-        for key in CONTAINER_KEYS:
-            if isinstance(data.get(key), list):
-                return [g for g in data[key] if isinstance(g, dict)]
-    return []
-
-
-def build_context_line(game: dict[str, Any]) -> str:
-    """Build a strict CONTEXT block from whatever real fields the entry has.
-
-    Handles both split home/away schemas (Odds-API style) and a single
-    combined "matchup" string (slate-tracker board style).
-    """
-    matchup = _first(game, FIELD_ALIASES["matchup"])
-    if not matchup:
-        home = _first(game, FIELD_ALIASES["home"])
-        away = _first(game, FIELD_ALIASES["away"])
-        matchup = f"{away} @ {home}" if home and away else "not in provided data"
-
-    lines = [
-        "CONTEXT:",
-        f"- sport: {_first(game, FIELD_ALIASES['sport']) or 'not in provided data'}",
-        f"- matchup: {matchup}",
-        f"- start_time: {_first(game, FIELD_ALIASES['commence']) or 'not in provided data'}",
-        f"- line: {_first(game, FIELD_ALIASES['odds']) or 'not in provided data'}",
-    ]
-    total = _first(game, FIELD_ALIASES["total"])
-    if total:
-        lines.append(f"- total: {total}")
-    for field in PASSTHROUGH_FIELDS:
-        value = game.get(field)
-        if value not in (None, "", [], {}):
-            lines.append(f"- {field}: {value}")
-    return "\n".join(lines)
+from rag_context import SYSTEM_PROMPT, build_game_context, build_prompt, extract_games
 
 
 def main() -> None:
@@ -104,7 +38,7 @@ def main() -> None:
         sys.exit(f"Input file not found: {input_path}")
 
     data = json.loads(input_path.read_text())
-    games = _extract_games(data)
+    games = extract_games(data)
     if not games:
         sys.exit("No game-like entries found in input JSON (expected a list of dicts, or a dict with 'games'/'slate'/'board'/'cards' key).")
 
@@ -116,7 +50,7 @@ def main() -> None:
     print(f"RAG analysis via: {llm.name} — {len(games)} games")
     lines = [f"# RAG Analysis ({llm.name})", ""]
     for game in games:
-        context = build_context_line(game)
+        context = build_game_context(game)
         prompt = build_prompt(context, "Give one factual, betting-relevant note using only the CONTEXT above.")
         try:
             note = llm.generate(prompt, system=SYSTEM_PROMPT).strip()
