@@ -2,7 +2,12 @@
 Provider-agnostic LLM wrapper.
 Pick model via LLM_PROVIDER env var (or --llm flag). No code changes needed to switch.
 
-Supported: ollama (local, free), gemini, deepseek, openai (or any OpenAI-compatible endpoint).
+Supported: ollama (local weights, free — also proxies Ollama-cloud models
+like deepseek-v4-flash:cloud), gemini, deepseek, anthropic, openai (or any
+OpenAI-compatible endpoint: OpenRouter, Groq, vLLM, ...).
+
+Stronger reasoning without a new key: pass an Ollama-cloud model, e.g.
+    --llm ollama --llm-model deepseek-v4-flash:cloud
 
 Usage:
     from llm_provider import get_llm
@@ -97,9 +102,45 @@ class DeepSeekProvider(LLMProvider):
         messages.append({"role": "user", "content": prompt})
         headers = {"Authorization": f"Bearer {self.api_key}"}
         payload = {"model": self.model, "messages": messages}
-        resp = requests.post(url, json=payload, headers=headers, timeout=60)
+        # deepseek-reasoner thinks for a while before answering.
+        resp = requests.post(url, json=payload, headers=headers, timeout=180)
         resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        message = resp.json()["choices"][0]["message"]
+        # Reasoner models put the chain in reasoning_content and may leave
+        # content empty; prefer the answer, fall back to the reasoning.
+        return message.get("content") or message.get("reasoning_content", "")
+
+
+class AnthropicProvider(LLMProvider):
+    """Claude — strongest reasoning of the wired providers."""
+
+    name = "anthropic"
+
+    def __init__(self, model: str | None = None):
+        self.model = model or os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+        self.api_key = os.getenv("ANTHROPIC_API_KEY", "")
+        if not self.api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY not set")
+
+    def generate(self, prompt: str, system: str | None = None) -> str:
+        url = "https://api.anthropic.com/v1/messages"
+        headers = {
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+        payload: dict = {
+            "model": self.model,
+            "max_tokens": int(os.getenv("ANTHROPIC_MAX_TOKENS", "1024")),
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if system:
+            # Top-level system param, not a pseudo-user turn.
+            payload["system"] = system
+        resp = requests.post(url, json=payload, headers=headers, timeout=120)
+        resp.raise_for_status()
+        blocks = resp.json().get("content", [])
+        return "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
 
 
 class OpenAICompatProvider(LLMProvider):
@@ -131,6 +172,7 @@ _PROVIDERS = {
     "ollama": OllamaProvider,
     "gemini": GeminiProvider,
     "deepseek": DeepSeekProvider,
+    "anthropic": AnthropicProvider,
     "openai": OpenAICompatProvider,
 }
 
