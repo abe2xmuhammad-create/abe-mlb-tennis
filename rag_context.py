@@ -31,6 +31,12 @@ RULES (strict, no exceptions):
      override it — a bullish note alongside PASS is still PASS.
 7. Do not restate a stat with a different meaning than CONTEXT gives it.
    "27 H" is 27 hits, not 27 home runs. Copy units and labels exactly.
+8. Never drop a sample-window qualifier from a stat. "L3 ERA 3.64" is the
+   last-three-starts ERA and must stay "L3 ERA 3.64" — writing "3.64 ERA"
+   presents a three-start number as a season number and is a serious error.
+   The same applies to L3 WHIP, xwOBA sample sizes ("83 PA"), and any
+   "N GS" / "N IP" span. If CONTEXT does not give a season-long figure,
+   never imply one.
 """
 
 
