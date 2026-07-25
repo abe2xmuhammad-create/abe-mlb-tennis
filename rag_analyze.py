@@ -5,13 +5,22 @@ LLM commentary on top. Does NOT touch, call, or modify any existing
 fetch/scoring/gate logic — pure additive, read-only against the JSON file.
 
 Usage:
-    python3 rag_analyze.py --input data/some_board.json --llm ollama
-    python3 rag_analyze.py --input data/some_board.json --llm gemini --llm-model gemini-2.0-flash
+    python3 rag_analyze.py --input data/f5_ml_plays_2026-07-25.json --llm ollama
 
-Input JSON shape: a list of game dicts, or a dict containing a list under
-a common key ("games", "slate", "board", "cards"). Field names are matched
-best-effort against common aliases so it works across different repos'
-schemas without hardcoding one repo's internals.
+    # stronger reasoning, no extra API key (Ollama-cloud model):
+    python3 rag_analyze.py --input board.json --llm ollama \
+        --llm-model deepseek-v4-flash:cloud
+
+    # hosted providers:
+    python3 rag_analyze.py --input board.json --llm anthropic
+    python3 rag_analyze.py --input board.json --llm gemini --llm-model gemini-2.0-flash
+
+Input JSON shape: a list of entry dicts, or a dict containing a list under
+"games", "slate", "board", "cards", or "plays". Field names are matched
+best-effort against common aliases, covering both Odds-API-shaped records
+(home_team/away_team/commence_time) and slate-tracker board output
+(matchup/time_et/line). Engine verdict fields (f5_play, f5_tier, ml_play,
+ml_tier, pen_*, notes) are passed into CONTEXT verbatim when present.
 """
 
 from __future__ import annotations
@@ -28,7 +37,11 @@ from rag_context import SYSTEM_PROMPT, build_game_context, build_prompt, extract
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", required=True, help="Path to board/report JSON file")
-    parser.add_argument("--llm", default=None, help="ollama|gemini|deepseek|openai")
+    parser.add_argument(
+        "--llm",
+        default=None,
+        help="ollama|gemini|deepseek|anthropic|openai (default: LLM_PROVIDER env, else ollama)",
+    )
     parser.add_argument("--llm-model", default=None)
     parser.add_argument("--output", default=None, help="Where to write analysis (default: <input>.analysis.md)")
     args = parser.parse_args()

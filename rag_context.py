@@ -20,6 +20,17 @@ RULES (strict, no exceptions):
 4. Odds/prices you state must match CONTEXT exactly — no rounding narratives,
    no implied-probability math unless CONTEXT already contains it.
 5. Keep output to one factual sentence. Flag uncertainty explicitly if present.
+6. The engine's own verdict fields are authoritative. Never contradict, soften,
+   or re-derive them:
+   - f5_play / f5_tier is the first-five-innings verdict.
+   - ml_play / ml_tier is the full-game moneyline verdict.
+   - A value of PASS means NO bet on that market. If f5_play is PASS you must
+     not describe an F5 play as recommended, leaning, or preferred; same for
+     ml_play. If both are PASS, state that the engine passes on both markets.
+   - Supporting notes explain the reasoning behind a verdict. They never
+     override it — a bullish note alongside PASS is still PASS.
+7. Do not restate a stat with a different meaning than CONTEXT gives it.
+   "27 H" is 27 hits, not 27 home runs. Copy units and labels exactly.
 """
 
 
@@ -106,7 +117,14 @@ def build_game_context(entry: dict[str, Any]) -> str:
 
     for field in PASSTHROUGH_FIELDS:
         value = entry.get(field)
-        if value not in (None, "", [], {}):
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(value, (list, tuple)):
+            # Render as nested bullets rather than a Python list repr, so the
+            # model reads discrete facts instead of one quoted blob.
+            lines.append(f"- {field}:")
+            lines.extend(f"    - {item}" for item in value)
+        else:
             lines.append(f"- {field}: {value}")
 
     return "\n".join(lines)
