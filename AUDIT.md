@@ -4,6 +4,12 @@
 **Audit date:** 2026-10-04
 **Toolchain:** Python 3.11.2 · ruff 0.16.10 · mypy 2.4.0 · bandit 1.9.4 · pip-audit (no manifest to scan)
 
+> **Status: remediated.** Every High and Medium finding below has been fixed on
+> `arena/01a10465-abe-mlb-tennis`, each verified by re-running the probe that exposed it, with 68
+> regression tests, `ruff`/`mypy --strict` clean, and CI added. See **[FIXES.md](FIXES.md)** for the
+> change-by-change mapping, the residual risks that remain, and the behaviour changes to know before
+> deploying. This document is preserved as the audit of record at `2f2b2d7`.
+
 ---
 
 ## 1. Scope and method
